@@ -1,0 +1,180 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const today = new Date().toISOString().slice(0,10);\n\n// Get the tasks string\nconst input = $json.tasks || \"\";\n\n// Split by either newlines OR \" |\" patterns OR multiple spaces\nconst lines = input.split(/ (?=\\w+\\|)|\\n/);\n\nlet completed = [];\nlet incomplete = [];\n\nfor (const line of lines) {\n  if (!line.trim()) continue;\n  const [task, status, dueDate] = line.split(\"|\").map(x => x.trim());\n\n  if (dueDate === today) {\n    if (status.toLowerCase() === \"complete\") {\n      completed.push(task);\n    } else {\n      incomplete.push({ Task: task, Status: status, DueDate: dueDate });\n    }\n  }\n}\n\nreturn [{ json: { completed, incomplete } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -336,
+        32
+      ],
+      "id": "3f8cf81d-759a-4701-b7b4-4a4ee233cbbf",
+      "name": "Parse Tasks"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get tomorrow's date in YYYY-MM-DD format\nconst tomorrow = new Date();\ntomorrow.setDate(tomorrow.getDate() + 1);\nconst nextDate = tomorrow.toISOString().slice(0,10);\n\n// Update incomplete tasks to have DueDate = tomorrow\nconst rolledOver = $json.incomplete.map(t => ({\n  Task: t.Task,\n  Status: \"Incomplete\",\n  DueDate: nextDate\n}));\n\n// Return both completed and updated incomplete tasks\nreturn [{ json: { completed: $json.completed, incomplete: rolledOver } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -144,
+        -96
+      ],
+      "id": "9a382991-de97-40f6-b372-98175c4cfabc",
+      "name": "Rollover Incomplete"
+    },
+    {
+      "parameters": {
+        "jsCode": "let text = \"📝 Daily To-Do Summary\\n\\n\";\n\n// Use empty arrays as default if undefined\nconst completed = $json.completed || [];\nconst incomplete = $json.incomplete || [];\n\n// Add completed tasks\ntext += \"✅ Completed:\\n\";\ntext += completed.length ? completed.map(t => `- ${t}`).join(\"\\n\") : \"- None\";\n\n// Add incomplete tasks\ntext += \"\\n\\n❌ Incomplete (moved to tomorrow):\\n\";\ntext += incomplete.length ? incomplete.map(t => `- ${t.Task}`).join(\"\\n\") : \"- None\";\n\nreturn [{ json: { emailBody: text } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        0
+      ],
+      "id": "70b526bc-bfc7-4931-9d29-c528fa10aadc",
+      "name": "Format Email"
+    },
+    {
+      "parameters": {
+        "sendTo": "srineeth.pss5@gmail.com",
+        "subject": "Daily To-Do Report",
+        "emailType": "text",
+        "message": "={{$json[\"emailBody\"]}}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        272,
+        -128
+      ],
+      "id": "5acca890-79d0-490e-b224-3b9aa7b4ecfc",
+      "name": "Send Gmail",
+      "webhookId": "03ad3376-d79c-4e5a-bbf2-11cb8c0a4e27",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "DYymENTjOUjMBHTa",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {},
+            {}
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -720,
+        -32
+      ],
+      "id": "9ef3bac7-7e5d-4fb8-a3f4-0fed8034305d",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f06790ed-1629-4a52-9a9d-49249f121d83",
+              "name": "tasks",
+              "value": "=Finish assignment|Incomplete|2025-10-01\nGym workout|Incomplete|2025-10-01\nRead book|Complete|2025-10-01\nPlaying|Complete|2025-10-01\nstudying|Incomplete|2025-10-01\nsleeping|Incomplete|2025-10-01\nCoding|Complete|2025-10-01\neating|complete|2025-10-01",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -496,
+        -192
+      ],
+      "id": "9c670775-a84f-4571-af37-74900cefbf80",
+      "name": "Tasks"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Parse Tasks": {
+      "main": [
+        [
+          {
+            "node": "Rollover Incomplete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rollover Incomplete": {
+      "main": [
+        [
+          {
+            "node": "Format Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Email": {
+      "main": [
+        [
+          {
+            "node": "Send Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tasks": {
+      "main": [
+        [
+          {
+            "node": "Parse Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1e560ad5-cb41-47ef-a4f1-766532950242",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "36642ba11ba5c5efcec1aaa79887c9ad6b8f004ce3b59ffb9dbd2cffc55a0dac"
+  },
+  "id": "2JBJwNqDbspnY034",
+  "tags": []
+}
