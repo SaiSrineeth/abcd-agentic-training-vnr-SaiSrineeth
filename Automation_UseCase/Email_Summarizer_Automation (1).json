@@ -1,0 +1,449 @@
+{
+  "name": "Email_Summarizer_Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours"
+            }
+          ]
+        }
+      },
+      "id": "ad01b511-397c-4a22-a93b-e55f6507bc57",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -2224,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "limit": 3,
+        "filters": {
+          "q": "newer_than:1d"
+        }
+      },
+      "id": "31f2bbf9-ea75-4c3a-bf14-ba38c19b4227",
+      "name": "Get Emails",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -2000,
+        -64
+      ],
+      "webhookId": "a4c05b0b-2360-4edb-b564-cd1d2bea1609",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "DYymENTjOUjMBHTa",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract key email info including sender\nreturn items.map(email => {\n  const headers = email.json.payload?.headers || [];\n  const getHeader = name => headers.find(h => h.name === name)?.value || '';\n  return {\n    json: {\n      from: getHeader('From'),\n      subject: getHeader('Subject') || 'No Subject',\n      body: email.json.snippet,\n      urgency: 'Normal',\n      hasAttachment: email.json.payload?.mimeType?.includes('multipart') || false\n    }\n  };\n});"
+      },
+      "id": "09c96d24-1b59-479c-9fc7-9fe8cca528b3",
+      "name": "Prepare Email Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1584,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "temperature": 0.4
+        }
+      },
+      "id": "8af62c62-2bdc-4848-98d1-674d16f037b8",
+      "name": "Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -1392,
+        160
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "qdU5zboKBVK7FAjz",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are an assistant that summarizes emails.\nFor each email, do the following:\n1️⃣ Summarize the content in 2–3 lines.\n2️⃣ Detect urgency → High / Normal / Low.\n3️⃣ Identify any clear actions (To-Dos) like replying, scheduling, following up.\n4️⃣ If you see a date/time or meeting reference, output it as an event.\n\nFormat:\n---\nFrom: {{$json[\"from\"]}}\nSubject: {{$json[\"subject\"]}}\nUrgency: <urgency>\nSummary: <summary>\nTo-Do: <action>\nMeeting: <meeting or deadline if found>\n---",
+        "options": {}
+      },
+      "id": "d65cefb3-8f0c-49fc-8b95-64c1c942cfd6",
+      "name": "AI Summarizer",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        -1392,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "subject": "📬 Daily Email Summary with To-Dos",
+        "message": "={{$json.combined_summaries}}",
+        "options": {}
+      },
+      "id": "eacc468c-565c-4639-acc8-8cb6c9e09214",
+      "name": "Create Gmail Draft",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -288,
+        -224
+      ],
+      "webhookId": "66dd882e-9846-46bb-8702-065f5fcb40d3",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "DYymENTjOUjMBHTa",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "7764218153",
+        "text": "={{$json.alertMessages}}\n",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "d579414b-ce46-4495-a0c2-fae2da386c43",
+      "name": "Send Telegram Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        -608,
+        -400
+      ],
+      "webhookId": "7ff7f725-894e-4428-b9a8-5c7cd6d3182e",
+      "credentials": {
+        "telegramApi": {
+          "id": "ZzlL7klYfeZLKzti",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "let tasks = [];\n\nfor (const email of items) {\n  const text = email.json.output || '';\n  \n  // Skip first two AI prompts\n  if (!text.includes('From:') || !text.includes('Subject:')) continue;\n\n  // Split multiple emails in one output\n  const emailBlocks = text.split('---').map(e => e.trim()).filter(e => e);\n\n  for (const block of emailBlocks) {\n    const todoMatch = block.match(/To-Do:\\s*(.*)/i);\n    if (todoMatch && todoMatch[1].trim() && todoMatch[1].trim().toLowerCase() !== 'none') {\n      // Optional: Include sender & subject in task content\n      const fromMatch = block.match(/From:\\s*(.*)/i);\n      const subjectMatch = block.match(/Subject:\\s*(.*)/i);\n\n      let content = todoMatch[1].trim();\n      if (fromMatch) content += ` (From: ${fromMatch[1].trim()})`;\n      if (subjectMatch) content += ` [${subjectMatch[1].trim()}]`;\n\n      // Set priority based on urgency\n      const priority = /Urgency:\\s*High/i.test(block) ? 4 : 1;\n\n      tasks.push({ json: { content, priority } });\n    }\n  }\n}\n\n// Return tasks; if none, return empty array to skip Todoist node\nreturn tasks;\n"
+      },
+      "id": "23806fdf-4af2-482c-b5ce-9bf9d14dc4d6",
+      "name": "Extract To-Dos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -848,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "let alerts = [];\n\nfor (const item of items) {\n  const text = item.json.output || '';\n  \n  // Skip non-email-summary items\n  if (!text.includes('From:') || !text.includes('Subject:')) continue;\n\n  // Split the input into individual email blocks using the \"---\" separator\n  const emailBlocks = text.split('---').map(e => e.trim()).filter(e => e);\n\n  // Only include blocks with High urgency\n  for (const block of emailBlocks) {\n    if (/Urgency:\\s*High/i.test(block)) {\n      alerts.push('---\\n' + block + '\\n---');\n    }\n  }\n}\n\n// Exit if no high priority alerts\nif (alerts.length === 0) return [];\n\n// Split into 4000-char chunks for Telegram\nconst chunks = [];\nlet current = '';\nfor (const alert of alerts) {\n  if ((current + '\\n\\n' + alert).length > 4000) {\n    chunks.push(current);\n    current = alert;\n  } else {\n    current += (current ? '\\n\\n' : '') + alert;\n  }\n}\nif (current) chunks.push(current);\n\n// Return each chunk as a separate Telegram message\nreturn chunks.map(c => ({ json: { alertMessages: c } }));\n"
+      },
+      "id": "211b8ab1-d794-42db-a113-958beffce079",
+      "name": "Filter for Telegram Alerts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -928,
+        -368
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// New Logic (Correct for Split in Batches)\nlet summaries = items\n  .map(i => i.json.output || i.json.text || '')\n  .filter(text => text.trim() !== '') // optional: remove empty strings\n  .join('\\n\\n');\n\nreturn [{ json: { combined_summaries: summaries } }];"
+      },
+      "id": "9df3bdb4-80ce-49e8-8632-036c4607bc1c",
+      "name": "Combine Summaries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -576,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "if (!items.length) return [];\n\n// Start HTML email\nlet htmlBody = `<h2>📝 Today's High-Priority To-Do List:</h2><ul>`;\n\n// Loop through each task\nitems.forEach(task => {\n  const content = task.json.content || '';\n  const priority = task.json.priority || 1;\n\n  // Skip tasks that are \"None.\"\n  if (content.toLowerCase().includes(\"none\")) return;\n\n  // Use ⚡ for high-priority\n  const emoji = priority == 4 ? \"⚡ \" : \"\";\n\n  // Add as HTML list item with checkbox\n  htmlBody += `<li>☐ ${emoji}${content}</li>`;\n});\n\nhtmlBody += `</ul><p>Have a productive day! ✅</p>`;\n\n// Return for Gmail node\nreturn [{ json: { gmailToDoList: htmlBody } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -576,
+        112
+      ],
+      "id": "810921e0-bcd8-41e8-b185-47164d9e3766",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "sendTo": "srineeth.pss5@gmail.com",
+        "subject": "Daily To-Do List",
+        "message": "={{$json.gmailToDoList}}\n",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -304,
+        144
+      ],
+      "id": "c8b771b9-a107-4dac-ad34-70af6a961c93",
+      "name": "Send a message",
+      "webhookId": "50c854c1-cbe4-404e-bc77-c44d810b2687",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "DYymENTjOUjMBHTa",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "srineeth.pss5@gmail.com",
+          "mode": "id"
+        },
+        "start": "={{$json[\"start\"].dateTime}}",
+        "end": "={{$json[\"end\"].dateTime}}",
+        "additionalFields": {
+          "description": "={{ $json[\"description\"] }}",
+          "summary": "={{ $json[\"summary\"] ? $json[\"summary\"] : \"Meeting\" }}"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        -576,
+        368
+      ],
+      "id": "30352d0c-219d-4b87-b39b-4868a11bf3ac",
+      "name": "Create an event",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "mqPYAc3IhJLvDXUs",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "let calendarEvents = [];\n\nconst now = new Date();\nlet startTime = new Date(now);\nlet endTime = new Date(now);\n\n// ⏰ keep your working time logic\nif (now.getHours() >= 18) {\n  startTime.setDate(startTime.getDate() + 1);\n  startTime.setHours(10, 0, 0, 0);\n  endTime = new Date(startTime.getTime() + 60 * 60 * 1000);\n} else {\n  startTime.setHours(startTime.getHours() + 2);\n  endTime = new Date(startTime.getTime() + 60 * 60 * 1000);\n}\n\nfor (let item of items) {\n  const text = item.json.output || '';\n  const meetingMatch = text.match(/Meeting:\\s*(.*)/i);\n  const summaryMatch = text.match(/Summary:\\s*(.*)/i);\n\n  if (meetingMatch) {\n    let summaryInfo = summaryMatch ? summaryMatch[1].trim() : \"Discussion meeting.\";\n    // ✂️ reduce to first sentence or first 100 chars\n    summaryInfo = summaryInfo.split(/[.!?]/)[0];\n    if (summaryInfo.length > 100) summaryInfo = summaryInfo.slice(0, 100) + \"...\";\n\n    calendarEvents.push({\n      json: {\n        summary: \"Meeting\", // fixed heading\n        description: summaryInfo, // shorter version\n        start: { dateTime: startTime.toISOString() },\n        end: { dateTime: endTime.toISOString() }\n      }\n    });\n    break; // ✅ only one meeting created\n  }\n}\n\nreturn calendarEvents;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -848,
+        288
+      ],
+      "id": "d9f69fcd-43a1-48f4-a7c9-8cfa95227d35",
+      "name": "Calender Event Details"
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "c748174f-f76b-4b8a-8c94-6197a2add849",
+      "name": "Split in Batches3",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        -864,
+        -160
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "64b25738-8d72-420f-882e-af182f6d7d4d",
+      "name": "Limit 10 Emails (Safety)2",
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        -1776,
+        -16
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "AI Summarizer": {
+      "main": [
+        [
+          {
+            "node": "Extract To-Dos",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Filter for Telegram Alerts",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Calender Event Details",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Split in Batches3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract To-Dos": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Email Data": {
+      "main": [
+        [
+          {
+            "node": "AI Summarizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Emails": {
+      "main": [
+        [
+          {
+            "node": "Limit 10 Emails (Safety)2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Summarizer",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter for Telegram Alerts": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Summaries": {
+      "main": [
+        [
+          {
+            "node": "Create Gmail Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calender Event Details": {
+      "main": [
+        [
+          {
+            "node": "Create an event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split in Batches3": {
+      "main": [
+        [
+          {
+            "node": "Combine Summaries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit 10 Emails (Safety)2": {
+      "main": [
+        [
+          {
+            "node": "Prepare Email Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "f3d48a77-070f-41ba-8914-d531c074a4fd",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "36642ba11ba5c5efcec1aaa79887c9ad6b8f004ce3b59ffb9dbd2cffc55a0dac"
+  },
+  "id": "lcWB7ED57nfvHhLN",
+  "tags": []
+}
