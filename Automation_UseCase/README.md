@@ -199,7 +199,7 @@ This automation is designed as a <b>multi-branch workflow</b> that begins with a
 <h2>🧩 Visual Workflow</h2>
 <!-- Replace these image links with your own repo image paths -->
 
-<h3>🧠 Workflow Snapshot</h3>
+<h3>🧠 N8N Workflow Snapshot</h3>
 <img src="./Final%20Workflow.png" alt="Workflow Diagram" width="600">
 
 <h3>📬 Gmail Draft Summary</h3>
